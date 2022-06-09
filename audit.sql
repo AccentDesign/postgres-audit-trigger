@@ -53,7 +53,8 @@ CREATE TABLE audit.logged_actions (
     action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
     row_data hstore,
     changed_fields hstore,
-    statement_only boolean not null
+    statement_only boolean not null,
+    meta_fields hstore
 );
 
 REVOKE ALL ON audit.logged_actions FROM public;
@@ -110,7 +111,8 @@ BEGIN
         current_query(),                              -- top-level query or queries (if multistatement) from client
         substring(TG_OP,1,1),                         -- action
         NULL, NULL,                                   -- row_data, changed_fields
-        'f'                                           -- statement_only
+        'f',                                          -- statement_only
+        NULL                                          -- fields to store abritary info
         );
 
     IF NOT TG_ARGV[0]::boolean IS DISTINCT FROM 'f'::boolean THEN
