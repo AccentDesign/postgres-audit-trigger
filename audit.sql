@@ -4,10 +4,10 @@
 -- This file should be generic and not depend on application roles or structures,
 -- as it's being listed here:
 --
---    https://wiki.postgresql.org/wiki/Audit_trigger_91plus    
+--    https://wiki.postgresql.org/wiki/Audit_trigger_91plus
 --
 -- This trigger was originally based on
---   http://wiki.postgresql.org/wiki/Audit_trigger
+--    http://wiki.postgresql.org/wiki/Audit_trigger
 -- but has been completely rewritten.
 --
 -- Should really be converted into a relocatable EXTENSION, with control and upgrade files.
@@ -42,9 +42,9 @@ CREATE TABLE audit.logged_actions (
     table_name text not null,
     relid oid not null,
     session_user_name text,
-    action_tstamp_tx TIMESTAMP WITH TIME ZONE NOT NULL,
-    action_tstamp_stm TIMESTAMP WITH TIME ZONE NOT NULL,
-    action_tstamp_clk TIMESTAMP WITH TIME ZONE NOT NULL,
+    action_tstamp_tx bigint NOT NULL,
+    action_tstamp_stm bigint NOT NULL,
+    action_tstamp_clk bigint NOT NULL,
     transaction_id bigint,
     application_name text,
     client_addr inet,
@@ -65,9 +65,9 @@ COMMENT ON COLUMN audit.logged_actions.schema_name IS 'Database schema audited t
 COMMENT ON COLUMN audit.logged_actions.table_name IS 'Non-schema-qualified table name of table event occured in';
 COMMENT ON COLUMN audit.logged_actions.relid IS 'Table OID. Changes with drop/create. Get with ''tablename''::regclass';
 COMMENT ON COLUMN audit.logged_actions.session_user_name IS 'Login / session user whose statement caused the audited event';
-COMMENT ON COLUMN audit.logged_actions.action_tstamp_tx IS 'Transaction start timestamp for tx in which audited event occurred';
-COMMENT ON COLUMN audit.logged_actions.action_tstamp_stm IS 'Statement start timestamp for tx in which audited event occurred';
-COMMENT ON COLUMN audit.logged_actions.action_tstamp_clk IS 'Wall clock time at which audited event''s trigger call occurred';
+COMMENT ON COLUMN audit.logged_actions.action_tstamp_tx IS 'Transaction start epoch for tx in which audited event occurred';
+COMMENT ON COLUMN audit.logged_actions.action_tstamp_stm IS 'Statement start epoch for tx in which audited event occurred';
+COMMENT ON COLUMN audit.logged_actions.action_tstamp_clk IS 'Wall clock time epoch at which audited event''s trigger call occurred';
 COMMENT ON COLUMN audit.logged_actions.transaction_id IS 'Identifier of transaction that made the change. May wrap, but unique paired with action_tstamp_tx.';
 COMMENT ON COLUMN audit.logged_actions.client_addr IS 'IP address of client that issued query. Null for unix domain socket.';
 COMMENT ON COLUMN audit.logged_actions.client_port IS 'Remote peer IP port address of client that issued query. Undefined for unix socket.';
@@ -90,30 +90,32 @@ DECLARE
     h_old hstore;
     h_new hstore;
     excluded_cols text[] = ARRAY[]::text[];
+    precision int = 1000000;
 BEGIN
     IF TG_WHEN <> 'AFTER' THEN
         RAISE EXCEPTION 'audit.if_modified_func() may only run as an AFTER trigger';
     END IF;
 
     audit_row = ROW(
-        nextval('audit.logged_actions_event_id_seq'), -- event_id
-        TG_TABLE_SCHEMA::text,                        -- schema_name
-        TG_TABLE_NAME::text,                          -- table_name
-        TG_RELID,                                     -- relation OID for much quicker searches
-        session_user::text,                           -- session_user_name
-        current_timestamp,                            -- action_tstamp_tx
-        statement_timestamp(),                        -- action_tstamp_stm
-        clock_timestamp(),                            -- action_tstamp_clk
-        txid_current(),                               -- transaction ID
-        current_setting('application_name'),          -- client application
-        inet_client_addr(),                           -- client_addr
-        inet_client_port(),                           -- client_port
-        current_query(),                              -- top-level query or queries (if multistatement) from client
-        substring(TG_OP,1,1),                         -- action
-        NULL, NULL,                                   -- row_data, changed_fields
-        'f',                                          -- statement_only
-        NULL                                          -- fields to store abritary info
-        );
+        nextval('audit.logged_actions_event_id_seq'),           -- event_id
+        TG_TABLE_SCHEMA::text,                                  -- schema_name
+        TG_TABLE_NAME::text,                                    -- table_name
+        TG_RELID,                                               -- relation OID for much quicker searches
+        session_user::text,                                     -- session_user_name
+        EXTRACT(EPOCH FROM current_timestamp) * precision,      -- action_tstamp_tx
+        EXTRACT(EPOCH FROM statement_timestamp()) * precision,  -- action_tstamp_stm
+        EXTRACT(EPOCH FROM clock_timestamp()) * precision,      -- action_tstamp_clk
+        txid_current(),                                         -- transaction ID
+        current_setting('application_name'),                    -- client application
+        inet_client_addr(),                                     -- client_addr
+        inet_client_port(),                                     -- client_port
+        current_query(),                                        -- top-level query or queries (if multistatement) from client
+        substring(TG_OP,1,1),                                   -- action
+        NULL,                                                   -- row_data
+        NULL,                                                   -- changed_fields
+        'f',                                                    -- statement_only
+        NULL                                                    -- fields to store abritary info
+    );
 
     IF NOT TG_ARGV[0]::boolean IS DISTINCT FROM 'f'::boolean THEN
         audit_row.client_query = NULL;
